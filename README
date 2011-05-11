@@ -8,6 +8,9 @@ TO USE:
 2.) The polling service is a reasonably trusted machine (like a Tor guard node) located outside of the censorship region. On the polling service, run:
     python polling_proxy.py
 
+DEPENDENCIES:
+storage.py uses the boto library for AWS. Installation instructions at http://boto.cloudhackers.com/.
+
 HOW IT WORKS:
 Upon receiving a connection, the client proxy chooses a random number as its connection ID, and it writes the connection ID, host, and port to the "connections" queue. It creates two queues, <conn_id>_request and <conn_id>_response. The client_proxy writes all requests from the client browser to the request queue. It polls the response queue for responses, and when it has one, it sends it back to the client browser. The polling proxy polls the "connections" queue, and when it gets a connection, it opens a connection to the target host and port. The polling proxy starts reading requests from the connection's request queue and writes responses to the connection's response queue.
 
