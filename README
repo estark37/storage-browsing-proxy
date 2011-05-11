@@ -1,4 +1,6 @@
-Browse simple web pages with Amazon Simple Queue Service as your proxy.
+Browse simple web pages with Amazon Simple Queue Service as your proxy if you are located in a place where certain websites are blocked and the Tor network is unusable (perhaps because bridges are blocked).
+
+Both the client and polling proxy are based on python-proxy (http://code.google.com/p/python-proxy/), with modifications to divert requests/responses to a third-party storage service.
 
 TO USE:
 1.) The client is a user, presumably in some region where certain websites are censored. On the client's computer, configure a browser to proxy HTTP and HTTPS requests though localhost:8080, and run:
