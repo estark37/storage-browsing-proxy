@@ -15,7 +15,7 @@ HOW IT WORKS:
 Upon receiving a connection, the client proxy chooses a random number as its connection ID, and it writes the connection ID, host, and port to the "connections" queue. It creates two queues, <conn_id>_request and <conn_id>_response. The client_proxy writes all requests from the client browser to the request queue. It polls the response queue for responses, and when it has one, it sends it back to the client browser. The polling proxy polls the "connections" queue, and when it gets a connection, it opens a connection to the target host and port. The polling proxy starts reading requests from the connection's request queue and writes responses to the connection's response queue.
 
 TO DO:
-1.) SQS permissions - the client proxy should not be able to delete messages, only write them.
+1.) SQS permissions - the client proxy should not be able to delete messages, only write them. The client should also not be able to list all queues, ideally.
 2.) Implement FIFO behavior on top of SQS. (Also on top of other storage services that we eventually use.) I think for SQS we should be safe by having the proxies include a sequence number when posting requests/responses. If a proxy pulls off a request/response with an unexpected sequence number, it should just stick it back onto the queue, or maybe buffer it for using later. Shouldn't come up often because SQS seems to be approximately FIFO.
 3.) Fix the storage API to work with other storage services. Each storage service must export the following functions:
     - Create new "connection" (in the case of SQS, a connection is a set of 3 queues)
