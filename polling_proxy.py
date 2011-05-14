@@ -86,7 +86,7 @@ import storage
 from storage import AmazonSQS
 
 __version__ = '0.1.0 Draft 1'
-BUFLEN = 8192
+BUFLEN = 6000
 VERSION = 'Python Proxy/'+__version__
 HTTPVER = 'HTTP/1.1'
 USE_STORAGE = True
@@ -177,6 +177,7 @@ class ConnectionHandler:
         self.target.connect(address)
 
     def _read_write(self):
+        msg_num = 0
         time_out_max = self.timeout/3
         socs = [self.target]
         count = 0
@@ -192,7 +193,8 @@ class ConnectionHandler:
                     if data:
                         print "Putting data: %s"%data
                         if in_ is self.target:
-                            self.storage.put(self.response_queue, data)                                
+                            self.storage.put(self.response_queue, str(msg_num) + " " + data)                                
+                            msg_num += 1
                         else:    
                             out.send(data)
                         count = 0

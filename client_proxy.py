@@ -163,6 +163,8 @@ class ConnectionHandler:
             self.storage.put(conns, "%s %s %d"%(self.queue_name, host, port))
 
     def _read_write(self, use_storage = False):
+        msg_num = -1
+        buffered = []
         time_out_max = self.timeout/3
         if (use_storage):
             socs = [self.client]
@@ -189,10 +191,24 @@ class ConnectionHandler:
                             out.send(data)
                         count = 0
             if (use_storage):
-                resp = self.storage.get(self.response_queue)
-                if (resp):
-                    print "Got response %s"%resp
-                    self.client.send(resp)
+                msg = self.storage.get(self.response_queue)
+                if (msg):
+                    resp_num, sep, resp = msg.partition(" ")
+                    resp_num = int(resp_num)
+                    print "Got response %d"%resp_num
+                    if (resp_num == msg_num + 1):
+                        print "Sending response %d"%resp_num
+                        self.client.send(resp)
+                        msg_num += 1
+                    else:
+                        print "Buffering response %d"%resp_num
+                        buffered.append((resp_num, resp))
+                        buffered.sort()
+                    while (len(buffered) > 0 and buffered[0][0] == msg_num + 1):
+                        print "Sending response %d"%buffered[0][0]
+                        self.client.send(buffered[0][1])
+                        msg_num += 1
+                        buffered = buffered[1:]                        
             if count == time_out_max:
                 break
 
