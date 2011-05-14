@@ -3,6 +3,7 @@ Browse simple web pages with Amazon Simple Queue Service as your proxy if you ar
 Both the client and polling proxy are based on python-proxy (http://code.google.com/p/python-proxy/), with modifications to divert requests/responses to a third-party storage service.
 
 TO USE:
+0.) The client has to add http://ocsp.verisign.com to the list of domains for which proxy settings should be bypassed. This step is to avoid the OCSP check for the AWS certificate going over the storage proxy, creating an infinite loop! TODO: figure out a way to fix this
 1.) The client is a user, presumably in some region where certain websites are censored. On the client's computer, configure a browser to proxy HTTP and HTTPS requests though localhost:8080, and run:
     python client_proxy.py
 2.) The polling service is a reasonably trusted machine (like a Tor guard node) located outside of the censorship region. On the polling service, run:
@@ -16,12 +17,11 @@ Upon receiving a connection, the client proxy chooses a random number as its con
 
 TO DO:
 1.) SQS permissions - the client proxy should not be able to delete messages, only write them. The client should also not be able to list all queues, ideally.
-2.) Implement FIFO behavior on top of SQS. (Also on top of other storage services that we eventually use.) I think for SQS we should be safe by having the proxies include a sequence number when posting requests/responses. If a proxy pulls off a request/response with an unexpected sequence number, it should just stick it back onto the queue, or maybe buffer it for using later. Shouldn't come up often because SQS seems to be approximately FIFO.
-3.) Fix the storage API to work with other storage services. Each storage service must export the following functions:
+2.) Fix the storage API to work with other storage services. Each storage service must export the following functions:
     - Create new "connection" (in the case of SQS, a connection is a set of 3 queues)
     - Write a request or response to the connection
     - Read a request or response to the connection
-    Thus where we see "create_queue" in the current proxy code, this should instead be "get_connection" or something like that.
-4.) Implement Storage classes for other services.
-5.) Error handling
-6.) Route requests through Tor on the polling proxy.
+    Where we see "create_queue" in the current proxy code, this should instead be "get_connection" or something like that.
+3.) Implement Storage classes for other services.
+4.) Error handling
+5.) Route requests through Tor on the polling proxy.
