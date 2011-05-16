@@ -113,8 +113,8 @@ class ConnectionHandler:
     def set_up_storage(self):
         self.queue_name = "%d"%random.uniform(0, 1000000)
         self.storage = AmazonSQS()
-        self.request_queue = self.storage.create_queue("%s_%s"%(self.queue_name,"request"))
-        self.response_queue = self.storage.create_queue("%s_%s"%(self.queue_name,"response"))        
+        self.requests = self.storage.get_requests_loc(self.queue_name)
+        self.responses = self.storage.get_responses_loc(self.queue_name)
 
     def get_base_header(self):
         while 1:
@@ -136,7 +136,7 @@ class ConnectionHandler:
         self._connect_target(self.path, use_storage)
         if (use_storage):
             #print "Putting %s in %s"%(self.connect, self.request_queue.name)
-            self.storage.put(self.request_queue, self.connect, True)
+            self.storage.put(self.requests, self.connect, True)
         self.client_buffer = ''
         self._read_write(use_storage)        
 
@@ -149,7 +149,7 @@ class ConnectionHandler:
         data = '%s %s %s\n'%(self.method, path, self.protocol)+ self.client_buffer
         if (use_storage):
             #print "Putting %s in %s"%(data,self.request_queue.name)
-            self.storage.put(self.request_queue, data, True)
+            self.storage.put(self.requests, data, True)
         else:
             self.target.send(data)
 
@@ -168,8 +168,7 @@ class ConnectionHandler:
             self.target = socket.socket(soc_family)
             self.target.connect(address)
         else:
-            conns = self.storage.create_queue("connections")
-            self.storage.put(conns, "%s %s %d"%(self.queue_name, host, port))
+            self.storage.new_connection("%s %s %d"%(self.queue_name, host, port))
 
     def _read_write(self, use_storage = False):
         msg_num = -1
@@ -194,7 +193,7 @@ class ConnectionHandler:
                         out = self.client
                     if data:
                         if in_ is self.client and use_storage:
-                            self.storage.put(self.request_queue, data, True)                                
+                            self.storage.put(self.requests, data, True)                                
                         else:    
                             out.send(data)
                             count = 0
@@ -202,7 +201,7 @@ class ConnectionHandler:
                 break
 
             if (use_storage):
-                msg = self.storage.get(self.response_queue, True)
+                msg = self.storage.get(self.responses, True)
                 if (msg):
                     self.client.send(msg)
 

@@ -92,8 +92,7 @@ HTTPVER = 'HTTP/1.1'
 USE_STORAGE = True
 
 def check_for_requests(storage):
-    conns = storage.conn.create_queue("connections")
-    c = storage.get(conns)
+    c = storage.get_connection()
     if (c == False):
         return
     else:
@@ -110,17 +109,13 @@ class ConnectionHandler:
         self.timeout = timeout
         self.client_buffer = ''
 
-        self.request_queue = self.storage.create_queue("%s_request"%self.conn_id)
-        self.response_queue = self.storage.create_queue("%s_response"%self.conn_id)
+        self.requests = self.storage.get_requests_loc(self.conn_id)
+        self.responses = self.storage.get_responses_loc(self.conn_id)
 
         data = self.get_base_header()
         if (not data):
             return
-#        print "get base header:"
-#        print data
         self.method, self.path, self.protocol = data
-  #      print "Path:"
-#        print self.path
         if (not self.method or not self.path or not self.protocol):
             return
 
@@ -131,12 +126,11 @@ class ConnectionHandler:
             self.method_others()
 
         self.target.close
-        
 
     def get_base_header(self):
         count = 0
         while 1:
-            data = self.storage.get(self.request_queue, True)
+            data = self.storage.get(self.requests, True)
             if (data):
                 self.client_buffer += data
                 end = self.client_buffer.find('\n')
@@ -152,20 +146,13 @@ class ConnectionHandler:
 
     def method_CONNECT(self):
         self._connect_target(self.path)
-        # self.client.send(HTTPVER+' 200 Connection established\n' + 'Proxy-agent: %s\n\n'%VERSION)
         self.client_buffer = ''
         self._read_write()        
 
     def method_others(self):
-        """self.path = self.path[7:]
-        i = self.path.find('/')
-        path = self.path[i:]"""
         path = self.path
-#        print "Host:"
-#        print self.host
         self._connect_target(self.host)
         data = '%s %s %s\n'%(self.method, path, self.protocol)+ self.client_buffer
-#        print "Sending to target %s"%data
         self.target.send(data)
 
         self.client_buffer = ''
@@ -183,7 +170,6 @@ class ConnectionHandler:
         self.target.connect(address)
 
     def _read_write(self):
-        msg_num = 0
         time_out_max = self.timeout/3
         socs = [self.target]
         count = 0
@@ -198,12 +184,11 @@ class ConnectionHandler:
                     data = in_.recv(BUFLEN)
                     if data:
                         if in_ is self.target:
-                            self.storage.put(self.response_queue, str(msg_num) + " " + data)                                
-                            msg_num += 1
+                            self.storage.put(self.responses, data, True)
                         else:    
                             out.send(data)
                         count = 0
-            resp = self.storage.get(self.request_queue, True)
+            resp = self.storage.get(self.requests, True)
             if (resp):
                 out.send(resp)
             if count == time_out_max:
