@@ -97,12 +97,13 @@ def check_for_requests(storage):
     if (c == False):
         return
     else:
+#        print "Processing connection %s"%c
         conn, host, port = c.split()
-        thread.start_new_thread(ConnectionHandler, (storage,conn,host,port))
+        thread.start_new_thread(ConnectionHandler, (conn,host,port))
 
 class ConnectionHandler:
-    def __init__(self, storage, conn_id, host, port, timeout=60):
-        self.storage = storage
+    def __init__(self, conn_id, host, port, timeout=60):
+        self.storage = AmazonSQS()
         self.host = host
         self.port = port
         self.conn_id = conn_id
@@ -111,9 +112,15 @@ class ConnectionHandler:
 
         self.request_queue = self.storage.create_queue("%s_request"%self.conn_id)
         self.response_queue = self.storage.create_queue("%s_response"%self.conn_id)
-        self.method, self.path, self.protocol = self.get_base_header()  
-        print "Path:"
-        print self.path
+
+        data = self.get_base_header()
+        if (not data):
+            return
+#        print "get base header:"
+#        print data
+        self.method, self.path, self.protocol = data
+  #      print "Path:"
+#        print self.path
         if (not self.method or not self.path or not self.protocol):
             return
 
@@ -129,7 +136,7 @@ class ConnectionHandler:
     def get_base_header(self):
         count = 0
         while 1:
-            data = self.storage.get(self.request_queue)
+            data = self.storage.get(self.request_queue, True)
             if (data):
                 self.client_buffer += data
                 end = self.client_buffer.find('\n')
@@ -137,7 +144,7 @@ class ConnectionHandler:
                     break
             count += 1
             if (count > self.timeout):
-                return
+                return False
         print '%s'%self.client_buffer[:end]#debug
         data = (self.client_buffer[:end+1]).split()
         self.client_buffer = self.client_buffer[end+1:]
@@ -154,11 +161,11 @@ class ConnectionHandler:
         i = self.path.find('/')
         path = self.path[i:]"""
         path = self.path
-        print "Host:"
-        print self.host
+#        print "Host:"
+#        print self.host
         self._connect_target(self.host)
         data = '%s %s %s\n'%(self.method, path, self.protocol)+ self.client_buffer
-        print "Sending to target %s"%data
+#        print "Sending to target %s"%data
         self.target.send(data)
 
         self.client_buffer = ''
@@ -171,7 +178,6 @@ class ConnectionHandler:
             host = host[:i]
         else:
             port = self.port
-        print "Connect target host: %s:%s"%(host,port)
         (soc_family, _, _, _, address) = socket.getaddrinfo(host, port)[0]
         self.target = socket.socket(soc_family)
         self.target.connect(address)
@@ -191,16 +197,14 @@ class ConnectionHandler:
                 for in_ in recv:
                     data = in_.recv(BUFLEN)
                     if data:
-                        print "Putting data: %s"%data
                         if in_ is self.target:
                             self.storage.put(self.response_queue, str(msg_num) + " " + data)                                
                             msg_num += 1
                         else:    
                             out.send(data)
                         count = 0
-            resp = self.storage.get(self.request_queue)
+            resp = self.storage.get(self.request_queue, True)
             if (resp):
-                print "Got data: %s"%resp
                 out.send(resp)
             if count == time_out_max:
                 break

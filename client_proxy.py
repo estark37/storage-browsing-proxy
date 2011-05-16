@@ -99,11 +99,8 @@ class ConnectionHandler:
 
         self.method, self.path, self.protocol = self.get_base_header()
 
-        if (USE_STORAGE):
-            self.queue_name = "%d"%random.uniform(0, 1000000)
-            self.storage = AmazonSQS()
-            self.request_queue = self.storage.create_queue("%s_%s"%(self.queue_name,"request"))
-            self.response_queue = self.storage.create_queue("%s_%s"%(self.queue_name,"response"))
+        if (USE_STORAGE and self.method != "CONNECT"):
+            self.set_up_storage()
         if self.method=='CONNECT':
             self.method_CONNECT(USE_STORAGE)
         elif self.method in ('OPTIONS', 'GET', 'HEAD', 'POST', 'PUT',
@@ -113,6 +110,11 @@ class ConnectionHandler:
         if (not USE_STORAGE):
             self.target.close()
 
+    def set_up_storage(self):
+        self.queue_name = "%d"%random.uniform(0, 1000000)
+        self.storage = AmazonSQS()
+        self.request_queue = self.storage.create_queue("%s_%s"%(self.queue_name,"request"))
+        self.response_queue = self.storage.create_queue("%s_%s"%(self.queue_name,"response"))        
 
     def get_base_header(self):
         while 1:
@@ -121,13 +123,20 @@ class ConnectionHandler:
             if end!=-1:
                 break
         print '%s'%self.client_buffer[:end]#debug
+        self.connect = self.client_buffer[:end] + "\n"
         data = (self.client_buffer[:end+1]).split()
         self.client_buffer = self.client_buffer[end+1:]
         return data
 
     def method_CONNECT(self, use_storage = False):
+        self.client.send(HTTPVER+' 200 Connection established\n'+
+                         'Proxy-agent: %s\n\n'%VERSION)
+        if (use_storage):
+            self.set_up_storage()
         self._connect_target(self.path, use_storage)
-        self.client.send(HTTPVER+' 200 Connection established\n' + 'Proxy-agent: %s\n\n'%VERSION)
+        if (use_storage):
+            #print "Putting %s in %s"%(self.connect, self.request_queue.name)
+            self.storage.put(self.request_queue, self.connect, True)
         self.client_buffer = ''
         self._read_write(use_storage)        
 
@@ -139,8 +148,8 @@ class ConnectionHandler:
         self._connect_target(host, use_storage)
         data = '%s %s %s\n'%(self.method, path, self.protocol)+ self.client_buffer
         if (use_storage):
-            print "Putting %s in %s"%(data,self.request_queue.name)
-            self.storage.put(self.request_queue, data)
+            #print "Putting %s in %s"%(data,self.request_queue.name)
+            self.storage.put(self.request_queue, data, True)
         else:
             self.target.send(data)
 
@@ -185,32 +194,17 @@ class ConnectionHandler:
                         out = self.client
                     if data:
                         if in_ is self.client and use_storage:
-                            print "Putting request: %s"%data
-                            self.storage.put(self.request_queue, data)                                
+                            self.storage.put(self.request_queue, data, True)                                
                         else:    
                             out.send(data)
-                        count = 0
-            if (use_storage):
-                msg = self.storage.get(self.response_queue)
-                if (msg):
-                    resp_num, sep, resp = msg.partition(" ")
-                    resp_num = int(resp_num)
-                    print "Got response %d"%resp_num
-                    if (resp_num == msg_num + 1):
-                        print "Sending response %d"%resp_num
-                        self.client.send(resp)
-                        msg_num += 1
-                    else:
-                        print "Buffering response %d"%resp_num
-                        buffered.append((resp_num, resp))
-                        buffered.sort()
-                    while (len(buffered) > 0 and buffered[0][0] == msg_num + 1):
-                        print "Sending response %d"%buffered[0][0]
-                        self.client.send(buffered[0][1])
-                        msg_num += 1
-                        buffered = buffered[1:]                        
+                            count = 0
             if count == time_out_max:
                 break
+
+            if (use_storage):
+                msg = self.storage.get(self.response_queue, True)
+                if (msg):
+                    self.client.send(msg)
 
 def start_server(host='localhost', port=8080, IPv6=False, timeout=60,
                   handler=ConnectionHandler):
