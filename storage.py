@@ -1,6 +1,15 @@
 #!/usr/bin/env python
 
 import boto, uuid
+import urllib
+import urllib2
+import mimetools
+import mimetypes
+import os
+
+from xml.dom import minidom
+import xml.dom
+
 from boto.sqs.connection import SQSConnection
 from boto.sqs.message import Message
 
@@ -22,10 +31,233 @@ class StorageService:
     For HTTP requests/responses, FIFO ordering is important; for retrieving
     connection IDs or IPs of clients wanting to use a Flash proxy,
     FIFO isn't important."""
-    def put(self, data, use_seq_num = False):
+    def put(self, place, data, use_seq_num = False):
         raise NotImplementedError("Abstract class")
-    def get(self, use_seq_num = False):
+    def get(self, place, use_seq_num = False):
         raise NotImplementedError("Abstract class")
+
+    def create_local_file(self, name, contents):
+        f = open("%s/%s"%(os.getcwd(),name), 'w')
+        f.write(contents)
+        f.close()
+
+    def delete_local_file(self, name):
+        os.remove("%s/%s"%(os.getcwd(),name))
+
+""" Some parts cribbed from boxdotnet.py from http://developers.box.net/w/page/12923917/ApiExamples"""
+class BoxDotNet(StorageService):
+    def __init__(self):
+        self.api_key = "bo8ktxdnlkco5dc55xf6plpggs8flece"
+        self.token = "zem048m381vspgafljvbipk7s00iebmn"
+        self.download_url = "https://www.box.net/api/1.0/download/%s/"%self.token
+        self.upload_url = "https://upload.box.net/api/1.0/upload/%s/"%self.token
+        self.url = "https://www.box.net/api/1.0/rest?action="
+        self.requests_folder = "86034303"
+        self.responses_folder = "86034411"
+        self.connections_folder = "86041821"
+        # Map folder IDs to the last sequence number that we saw in that folder
+        self.last_get_seq = {}
+        self.last_put_seq = {}
+    #The box.net return status codes are all over the show                                                                   
+    # method_name : return_value_that_is_ok                                                                                  
+        self.RETURN_CODES = {
+            'get_ticket'        :   'get_ticket_ok',
+            'get_auth_token'    :   'get_auth_token_ok',
+            'get_account_tree'  :   'listing_ok',
+            'logout'            :   'logout_ok',
+            'create_folder'     :   'create_ok',
+            'upload'            :   'upload_ok',
+            'delete'            :   's_delete_node',
+            'get_versions'      :   's_get_versions'
+            }
+    
+    def check_for_error(self, xmldoc, action):
+        status = xmldoc.childNodes[0].childNodes[0].childNodes[0].nodeValue
+        if (status == self.RETURN_CODES[action]):
+            return False
+        return True
+
+    def make_url(self, action, extra_args = {}):
+        url = "%s%s&api_key=%s&auth_token=%s"%(self.url, action, self.api_key, self.token)
+        url = "%s&%s"%(url, urllib.urlencode(extra_args))
+#        for arg, val in extra_args.iteritems():
+#url = url + "&%s=%s"%(arg, urllib.urlencode(val))
+
+        return url
+
+    def make_request(self, url):
+        f = urllib.urlopen(url, proxies = {})
+        data = f.read()
+        if (data):
+            xmldoc = minidom.parseString(data)
+            return xmldoc
+        return False
+
+    def get_content_type(self, filename):
+        return mimetypes.guess_type(filename)[0] or 'application/octet-stream'      
+        
+    def upload_file(self, name, folder_id):
+        url = "%s%s"%(self.upload_url, folder_id)
+        filename = "%s/%s"%(os.getcwd(), name)
+
+        # construct POST data                                                                                                
+        boundary = mimetools.choose_boundary()
+        body = ""
+
+        # filename                                                                                                           
+        body += "--%s\r\n" % (boundary)
+        body += 'Content-Disposition: form-data; name="share"\r\n\r\n'
+        body += "1\r\n" # share = 1
+
+        body += "--%s\r\n" % (boundary)
+        body += "Content-Disposition: form-data; name=\"file\";"
+        body += " filename=\"%s\"\r\n" % filename
+        body += "Content-Type: %s\r\n\r\n" % self.get_content_type(filename)
+
+        fp = file(filename, "rb")
+        data = fp.read()
+        fp.close()
+
+        postData = body.encode("utf_8") + data + \
+            ("\r\n--%s--" % (boundary)).encode("utf_8")
+
+        ph = urllib2.ProxyHandler({})
+        opener = urllib2.build_opener(ph)
+        urllib2.install_opener(opener)
+        request = urllib2.Request(url)
+        request.add_data(postData)
+        request.add_header("Content-Type", \
+            "multipart/form-data; boundary=%s" % boundary)
+        response = urllib2.urlopen(request)
+        rspXML = response.read()
+
+        if (rspXML):
+            xmldoc = minidom.parseString(rspXML)
+            if (not self.check_for_error(xmldoc, "upload")):
+                return True
+        return False
+
+    def download_file(self, file_id, version_id = False):
+        url = "%s%s"%(self.download_url, file_id)
+        if (version_id):
+            url = "%s/%s"%(url, version_id)
+        print "Downloading file from %s"%url
+        request = urllib2.Request(url)
+        ph = urllib2.ProxyHandler({})
+        opener = urllib2.build_opener(ph)
+        urllib2.install_opener(opener)
+        response = urllib2.urlopen(request)
+        return response.read()
+
+    # ID is typically just a random number, name includes the host and port
+    def new_connection(self, conn_id, conn_name):
+        self.create_local_file(conn_name, "")
+        self.upload_file(conn_name, self.connections_folder)
+        ######
+        # TODO: check errors for the following requests
+        ######
+        url = self.make_url("create_folder", {"parent_id": self.requests_folder, "name": conn_id, "share": "1"})
+        self.make_request(url)
+        url = self.make_url("create_folder", {"parent_id": self.responses_folder, "name": conn_id, "share": "1"})
+        self.make_request(url)
+        self.delete_local_file(conn_name)
+        return (self.get_requests_loc(conn_id), self.get_responses_loc(conn_id))
+
+    def delete_file(self, file_id):
+        url = self.make_url("delete", {"target": "file", "target_id": file_id})
+        self.make_request(url)
+
+    def get_connection(self):
+        url = self.make_url("get_account_tree", {"folder_id": self.connections_folder, "params[]": "nozip"})
+        xmldoc = self.make_request(url)
+        if (xmldoc):
+            if (not self.check_for_error(xmldoc, "get_account_tree")):
+                folder_children = xmldoc.childNodes[0].childNodes[1].childNodes[0].childNodes
+                if (len(folder_children) <= 1):
+                    return False
+                files = folder_children[1]
+                if (len(files.childNodes) > 0):
+                    file_node = files.childNodes[0]
+                    conn_id = file_node.attributes["file_name"].nodeValue
+                    file_id = file_node.attributes["id"].nodeValue
+                    self.delete_file(file_id)
+                    return conn_id
+
+    def get_connections_loc(self):
+        return self.connections_folder
+
+    def get_loc(self, conn_id, root):
+        url = self.make_url("get_account_tree", {"folder_id": root, "params[]": "nozip"})
+        xmldoc = self.make_request(url)
+        if (xmldoc):
+            if (not self.check_for_error(xmldoc, "get_account_tree")):
+                folder_children = xmldoc.childNodes[0].childNodes[1].childNodes[0].childNodes[1].childNodes
+                folder_children = filter(lambda f: f.attributes["name"].nodeValue == conn_id, folder_children)
+                if (len(folder_children) > 0):
+                    return folder_children[0].attributes["id"].nodeValue
+        return False
+
+
+
+    def get_requests_loc(self, conn_id):
+        return self.get_loc(conn_id, self.requests_folder)
+    def get_responses_loc(self, conn_id):
+        return self.get_loc(conn_id, self.responses_folder)
+
+    """ For Box.net API, we always use sequence numbers and enforce FIFO. """
+    def put(self, place, data, use_seq_num = True):        
+        if (self.last_put_seq.has_key(place)):
+            next_seq_num = self.last_put_seq[place] + 1
+        else:
+            self.last_put_seq[place] = -1
+            next_seq_num = 0
+        filename = "%d"%next_seq_num
+        self.create_local_file(filename, data)
+        self.upload_file(filename, place)
+        self.last_put_seq[place] = next_seq_num
+
+    def get(self, place, use_seq_num = True):
+        if (self.last_get_seq.has_key(place)):
+            next_seq_num = self.last_get_seq[place] + 1
+        else:
+            self.last_get_seq[place] = -1
+            next_seq_num = 0
+        url = self.make_url("get_account_tree", {"folder_id": place, "params[]": "nozip"})
+        xmldoc = self.make_request(url)
+        files = []
+        if (xmldoc):
+            if (not self.check_for_error(xmldoc, "get_account_tree")):
+                folder_children = xmldoc.childNodes[0].childNodes[1].childNodes[0].childNodes
+                for f in folder_children:
+                    if (f.nodeName == "files"):
+                        files = f.childNodes
+                if (not files or len(files) == 0):
+                    return False
+                # Find the file whose name is the next sequence number we're expecting in this place
+                files = map(lambda f: (f.attributes["file_name"].nodeValue, f.attributes["id"].nodeValue), files)
+                files = filter(lambda f: f[0] == "%d"%next_seq_num, files)
+                if (len(files) == 0):
+                    return False
+
+                file = files[0][1]
+                # download the earliest version of a file and delete it
+                url = self.make_url("get_versions", {"target": "file", "target_id": file})
+                xmldoc = self.make_request(url)
+                if (not self.check_for_error(xmldoc, "get_versions")):
+                    versions = xmldoc.childNodes[0].childNodes[1].childNodes
+                    versions = map(lambda v: (v.attributes["updated"].nodeValue, v.attributes["version_id"].nodeValue), versions)
+                    if (len(versions) == 0):
+                        use_version = False
+                    else:
+                        versions.sort()
+                        use_version = versions[len(versions)-1][1]
+                    data = self.download_file(file, use_version)
+                    self.last_get_seq[place] = next_seq_num
+                    url = self.make_url("delete", {"target":"file", "target_id":file})
+                    self.make_request(url)
+                    return data
+
+
 
 class AmazonSQS(StorageService):
     def __init__(self):
@@ -36,9 +268,10 @@ class AmazonSQS(StorageService):
         self.secret_access_key = ""
         self.conn = SQSConnection(self.access_key_id, self.secret_access_key, True, None, None, None, None, None)
 
-    def new_connection(self, conn_id):
+    def new_connection(self, conn_id, conn_name):
         conns = self.conn.create_queue("connections")
-        self.put(conns, conn_id)
+        self.put(conns, conn_name)
+        return (self.get_requests_loc(conn_id), self.get_responses_loc(conn_id))
 
     def get_connection(self):
         conns = self.conn.create_queue("connections")

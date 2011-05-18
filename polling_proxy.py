@@ -81,36 +81,50 @@ Qual a diferença entre um proxy Elite, Anónimo e Transparente?
 
 """
 
-import socket, thread, select, random
+import socket, thread, select, random, time
 import storage
-from storage import AmazonSQS
+from storage import AmazonSQS, BoxDotNet
 
 __version__ = '0.1.0 Draft 1'
 BUFLEN = 6000
 VERSION = 'Python Proxy/'+__version__
 HTTPVER = 'HTTP/1.1'
 USE_STORAGE = True
+STORAGE_METHOD = 'AmazonSQS'
 
 def check_for_requests(storage):
     c = storage.get_connection()
     if (c == False):
         return
     else:
-#        print "Processing connection %s"%c
+        print "Processing connection %s"%c
         conn, host, port = c.split()
         thread.start_new_thread(ConnectionHandler, (conn,host,port))
 
 class ConnectionHandler:
     def __init__(self, conn_id, host, port, timeout=60):
-        self.storage = AmazonSQS()
+        if (STORAGE_METHOD == 'AmazonSQS'):
+            self.storage = AmazonSQS()
+        else:
+            self.storage = BoxDotNet()
         self.host = host
-        self.port = port
+        self.port = int(port)
         self.conn_id = conn_id
         self.timeout = timeout
         self.client_buffer = ''
 
-        self.requests = self.storage.get_requests_loc(self.conn_id)
-        self.responses = self.storage.get_responses_loc(self.conn_id)
+        tries = 0
+        while (1):
+            self.requests = self.storage.get_requests_loc(self.conn_id)
+            self.responses = self.storage.get_responses_loc(self.conn_id)
+            print "requests loc: %s, responses loc: %s"%(self.requests, self.responses)
+            if (self.requests == False or self.responses == False):
+                time.sleep(1)
+                tries += 1
+                if (tries >= 10):
+                    return
+            else:
+                break
 
         data = self.get_base_header()
         if (not data):
@@ -150,6 +164,7 @@ class ConnectionHandler:
         self._read_write()        
 
     def method_others(self):
+        print "Path: %s, host: %s"%(self.path, self.host)
         path = self.path
         self._connect_target(self.host)
         data = '%s %s %s\n'%(self.method, path, self.protocol)+ self.client_buffer
@@ -165,6 +180,7 @@ class ConnectionHandler:
             host = host[:i]
         else:
             port = self.port
+        print "Host: %s, port: %s"%(host,port)
         (soc_family, _, _, _, address) = socket.getaddrinfo(host, port)[0]
         self.target = socket.socket(soc_family)
         self.target.connect(address)
@@ -188,8 +204,10 @@ class ConnectionHandler:
                         else:    
                             out.send(data)
                         count = 0
+            print "Getting messages from requests folder %s"%self.requests
             resp = self.storage.get(self.requests, True)
             if (resp):
+                print "Got data: %s"%resp
                 out.send(resp)
             if count == time_out_max:
                 break
@@ -203,8 +221,11 @@ def start_server(host='localhost', port=8081, IPv6=False, timeout=60):
     soc.bind((host, port))
     print "Serving on %s:%d."%(host, port)#debug
     soc.listen(0)
-
-    storage = AmazonSQS()
+    
+    if (STORAGE_METHOD == 'AmazonSQS'):
+        storage = AmazonSQS()
+    else:
+        storage = BoxDotNet()
 
     while 1:
         check_for_requests(storage)

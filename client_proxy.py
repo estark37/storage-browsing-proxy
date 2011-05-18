@@ -83,13 +83,14 @@ Qual a diferença entre um proxy Elite, Anónimo e Transparente?
 
 import socket, thread, select, random
 import storage
-from storage import AmazonSQS
+from storage import AmazonSQS, BoxDotNet
 
 __version__ = '0.1.0 Draft 1'
 BUFLEN = 8192
 VERSION = 'Python Proxy/'+__version__
 HTTPVER = 'HTTP/1.1'
 USE_STORAGE = True
+STORAGE_METHOD = 'AmazonSQS'
 
 class ConnectionHandler:
     def __init__(self, connection, address, timeout):
@@ -111,10 +112,13 @@ class ConnectionHandler:
             self.target.close()
 
     def set_up_storage(self):
-        self.queue_name = "%d"%random.uniform(0, 1000000)
-        self.storage = AmazonSQS()
-        self.requests = self.storage.get_requests_loc(self.queue_name)
-        self.responses = self.storage.get_responses_loc(self.queue_name)
+        self.conn_name = "%d"%random.uniform(0, 1000000)
+        if (STORAGE_METHOD == 'AmazonSQS'):
+            self.storage = AmazonSQS()
+        else:
+            self.storage = BoxDotNet()
+        #self.requests = self.storage.get_requests_loc(self.conn_name)
+        #self.responses = self.storage.get_responses_loc(self.conn_name)
 
     def get_base_header(self):
         while 1:
@@ -135,7 +139,6 @@ class ConnectionHandler:
             self.set_up_storage()
         self._connect_target(self.path, use_storage)
         if (use_storage):
-            #print "Putting %s in %s"%(self.connect, self.request_queue.name)
             self.storage.put(self.requests, self.connect, True)
         self.client_buffer = ''
         self._read_write(use_storage)        
@@ -148,7 +151,6 @@ class ConnectionHandler:
         self._connect_target(host, use_storage)
         data = '%s %s %s\n'%(self.method, path, self.protocol)+ self.client_buffer
         if (use_storage):
-            #print "Putting %s in %s"%(data,self.request_queue.name)
             self.storage.put(self.requests, data, True)
         else:
             self.target.send(data)
@@ -168,7 +170,8 @@ class ConnectionHandler:
             self.target = socket.socket(soc_family)
             self.target.connect(address)
         else:
-            self.storage.new_connection("%s %s %d"%(self.queue_name, host, port))
+            self.requests, self.responses = self.storage.new_connection(self.conn_name, "%s %s %d"%(self.conn_name, host, port))
+            print "Requests loc: %s, Responses loc: %s"%(self.requests, self.responses)
 
     def _read_write(self, use_storage = False):
         msg_num = -1
@@ -201,6 +204,7 @@ class ConnectionHandler:
                 break
 
             if (use_storage):
+                print "Checking for messages in responses folder: %s"%self.responses
                 msg = self.storage.get(self.responses, True)
                 if (msg):
                     self.client.send(msg)
