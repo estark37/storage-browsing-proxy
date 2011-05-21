@@ -24,6 +24,8 @@ class StorageService:
         raise NotImplementedError("Abstract class")
     def get_responses_loc(self):
         raise NotImplementedError("Abstract class")
+    def get_place(self, place_name):
+        raise NotImplementedError("Abstract class")
 
     """ use_seq_num forces FIFO ordering of messages.
     In order for one party to receive messages in a FIFO order,
@@ -34,6 +36,9 @@ class StorageService:
     def put(self, place, data, use_seq_num = False):
         raise NotImplementedError("Abstract class")
     def get(self, place, use_seq_num = False):
+        raise NotImplementedError("Abstract class")
+
+    def delete(self, place, data):
         raise NotImplementedError("Abstract class")
 
     def create_local_file(self, name, contents):
@@ -76,6 +81,9 @@ class BoxDotNet(StorageService):
         if (status == self.RETURN_CODES[action]):
             return False
         return True
+
+    def delete(self, place, data):
+        raise NotImplementedError("Use BoxDotNetSmallData if you need this functionality.")
 
     def make_url(self, action, extra_args = {}):
         url = "%s%s&api_key=%s&auth_token=%s"%(self.url, action, self.api_key, self.token)
@@ -172,6 +180,7 @@ class BoxDotNet(StorageService):
         xmldoc = self.make_request(url)
         if (xmldoc):
             if (not self.check_for_error(xmldoc, "get_account_tree")):
+                print "Getting connection"
                 folder_children = xmldoc.childNodes[0].childNodes[1].childNodes[0].childNodes
                 if (len(folder_children) <= 1):
                     return False
@@ -197,6 +206,16 @@ class BoxDotNet(StorageService):
                     return folder_children[0].attributes["id"].nodeValue
         return False
 
+    def get_place(self, place_name):
+        loc = self.get_loc(place_name, 0)
+        if (loc == False):
+            url = self.make_url("create_folder", {"parent_id": "0", "name": place_name, "share": "1"})
+            xmldoc = self.make_request(url)
+            if (xmldoc):
+                if (not self.check_for_error(xmldoc, "create_folder")):
+                    return xmldoc.childNodes[0].childNodes[1].childNodes[0].childNodes[0].nodeValue
+        else:
+            return loc
 
 
     def get_requests_loc(self, conn_id):
@@ -257,6 +276,47 @@ class BoxDotNet(StorageService):
                     self.make_request(url)
                     return data
 
+""" A subclass of BoxDotNet for 'small' data. When the data stored is short enough to be contained in the file name and sequence numbers (FIFO) aren't necessary, use this class. """
+class BoxDotNetSmallData(BoxDotNet):
+    def put(self, place, data):
+        filename = data
+        self.create_local_file(filename, "")
+        self.upload_file(filename, place)
+
+    def get(self, place, use_seq_num = False):
+        url = self.make_url("get_account_tree", {"folder_id": place, "params[]": "nozip"})
+        xmldoc = self.make_request(url)
+        files = []
+        if (xmldoc):
+            if (not self.check_for_error(xmldoc, "get_account_tree")):
+                folder_children = xmldoc.childNodes[0].childNodes[1].childNodes[0].childNodes
+                for f in folder_children:
+                    if (f.nodeName == "files"):
+                        files = f.childNodes
+                if (not files or len(files) == 0):
+                    return False
+                file = (files[0].attributes["file_name"].nodeValue, files[0].attributes["id"].nodeValue)
+
+                url = self.make_url("delete", {"target":"file", "target_id":file[1]})
+                self.make_request(url)
+                return file[0]
+
+    def delete(self, place, data):
+        url = self.make_url("get_account_tree", {"folder_id": place, "params[]": "nozip"})
+        xmldoc = self.make_request(url)
+        files = []
+        if (xmldoc):
+            if (not self.check_for_error(xmldoc, "get_account_tree")):
+                folder_children = xmldoc.childNodes[0].childNodes[1].childNodes[0].childNodes
+                for f in folder_children:
+                    if (f.nodeName == "files"):
+                        files = f.childNodes
+                if (not files or len(files) == 0):
+                    return
+                files = filter(lambda f: f.attributes["file_name"].nodeValue == data, files)            
+                file = files[0].attributes["id"].nodeValue
+                url = self.make_url("delete", {"target":"file", "target_id":file})
+                self.make_request(url)
 
 
 class AmazonSQS(StorageService):
@@ -272,6 +332,9 @@ class AmazonSQS(StorageService):
         conns = self.conn.create_queue("connections")
         self.put(conns, conn_name)
         return (self.get_requests_loc(conn_id), self.get_responses_loc(conn_id))
+
+    def get_place(self, place_name):
+        return self.create_queue(place_name)
 
     def get_connection(self):
         conns = self.conn.create_queue("connections")
@@ -326,3 +389,33 @@ class AmazonSQS(StorageService):
 
     def create_queue(self, name):
         return self.conn.create_queue(name)
+
+    def delete(self, place, data):
+        msgs = place.get_messages()
+        for m in msgs:
+            if (m.get_body() == data):
+                place.delete_message(m)
+
+class StorageQueue:
+    # storages is a list of names of StorageServices (i.e. storages = ['AmazonSQS', 'BoxDotNetSmallData'])
+    def __init__(self, storages, place_name):
+        storages = map(lambda s: eval(s + "()"), storages)
+        places = map(lambda storage: storage.get_place(place_name), storages)
+        self.storages = zip(storages, places)
+    
+    def enqueue(self, data):
+        for (storage, place) in self.storages:
+            storage.put(place, data)
+
+    def dequeue(self):
+        for (storage, place) in self.storages:
+            data = storage.get(place)
+            if (data):
+                self.delete_from_all(data)
+                break
+        return data
+
+    def delete_from_all(self, data):
+        for (storage, place) in self.storages:
+            storage.delete(place, data)
+            
