@@ -396,6 +396,12 @@ class AmazonSQS(StorageService):
             if (m.get_body() == data):
                 place.delete_message(m)
 
+"""
+StorageQueue is a redundant queue distributed over multiple storage services.
+enqueue() tries to insert a value into all available storage services.
+dequeue() tries to get a value from any available storage service, and once it gets a value,
+it deletes this value from all other available services.
+"""
 class StorageQueue:
     # storages is a list of names of StorageServices (i.e. storages = ['AmazonSQS', 'BoxDotNetSmallData'])
     def __init__(self, storages, place_name):
