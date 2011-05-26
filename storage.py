@@ -396,6 +396,118 @@ class AmazonSQS(StorageService):
             if (m.get_body() == data):
                 place.delete_message(m)
 
+
+class AmazonS3(StorageService):
+    def __init__(self):
+        self.last_msg = -1
+        self.buffered = []
+        self.msg_num = 0
+        self.access_key_id = ""
+        self.secret_access_key = ""
+        self.conn =  boto.connect_s3(self.access_key_id, self.secret_access_key)
+
+    def new_connection(self, conn_id, conn_name):
+        conns = self.conn.create_bucket("connections294s")
+        self.put(conns, conn_name)
+        return (self.get_requests_loc(conn_id), self.get_responses_loc(conn_id))
+
+    def get_place(self, place_name):
+        return self.create_bucket(place_name)
+
+    def get_connection(self):
+        conns = self.conn.create_bucket("connections294s")
+        return self.get(conns)
+
+    def get_connections_loc(self):
+        return self.conn.create_bucket("connections294s")
+
+    def get_responses_loc(self, conn_id):
+        return self.conn.create_bucket("%s_response"%conn_id)
+
+    def get_requests_loc(self, conn_id):
+        return self.conn.create_bucket("%s_request"%conn_id)
+
+    def put(self, q, data, use_seq_num = False):
+       # print "Putting data:"
+	#filename = "testcs294file"
+	#FILE = open(filename,"w")
+	#status = FILE.writelines(m)
+    	#FILE.close()
+	if (use_seq_num):
+            data = str(self.msg_num) + " " + data
+            self.msg_num += 1
+	    print "data"
+	    print data
+        import sys
+	def percent_cb(complete, total):
+    		sys.stdout.write('.')
+    		sys.stdout.flush()
+
+	from boto.s3.key import Key
+	k = Key(q)
+	k.key = 'testcs294file'
+	status = k.set_contents_from_string(data)
+	if (status == False):
+            print "Put failed"
+            return False
+        return True
+
+    def get(self, q, use_seq_num = False):
+	if (len(self.buffered) > 0 and self.buffered[0][0] == self.last_msg + 1):
+            data = self.buffered[0][1]
+            self.buffered = self.buffered[1:]
+            self.last_msg += 1
+            return data
+	import sys
+	def percent_cb(complete, total):
+    		sys.stdout.write('.')
+    		sys.stdout.flush()
+
+	import time
+	
+	from boto.s3.key import Key
+	k = Key(q)
+	k.key = 'testcs294file'
+        if (not k.exists()):
+            return False
+	m = k.get_contents_as_string()
+        if (m == None):
+            return False
+        else:
+	   q.delete_key(k)
+	
+	   if (not use_seq_num):
+		return m
+           else:
+		msg_num, sep, msg = m.partition(" ")
+		msg_num = int(msg_num)
+		#print msg_num
+		#print self.last_msg
+                if (msg_num == self.last_msg + 1):
+                   # print "Using msg %d"%msg_num
+                    self.last_msg = msg_num
+               	    return msg
+                else:
+                   # print "Buffering msg %d, last_msg: %d"%(msg_num, self.last_msg)
+                    self.buffered.append((msg_num, msg))
+                    self.buffered.sort()
+		   # print self.buffered
+                
+       
+    def create_bucket(self, name):
+        return self.conn.create_bucket(name)
+
+
+
+    def delete(self, place, data):
+        bucket_list = place.list()
+        for m in bucket_list:
+	    k = m.key
+	    str = k.get_contents_as_string()
+            if (str == data):
+                place.delete_key(k)
+
+
 """
 StorageQueue is a redundant queue distributed over multiple storage services.
 enqueue() tries to insert a value into all available storage services.
