@@ -395,7 +395,7 @@ class AmazonSQS(StorageService):
         for m in msgs:
             if (m.get_body() == data):
                 place.delete_message(m)
-
+"""
 
 class AmazonS3(StorageService):
     def __init__(self):
@@ -506,7 +506,7 @@ class AmazonS3(StorageService):
 	    str = k.get_contents_as_string()
             if (str == data):
                 place.delete_key(k)
-
+"""
 
 """
 StorageQueue is a redundant queue distributed over multiple storage services.
